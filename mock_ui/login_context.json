@@ -1,0 +1,68 @@
+[
+  {
+    "tag": "body",
+    "text": "Swag Labs\nAccepted usernames are:\nstandard_user\nlocked_out_user\nproblem_user\nperformance_glitch_user\nerror_user\nvisual_user\nPassword for all users:\nsecret_sauce"
+  },
+  {
+    "tag": "div",
+    "text": "Swag Labs",
+    "class": "login_logo"
+  },
+  {
+    "tag": "form",
+    "text": "",
+    "action": "https://www.saucedemo.com/",
+    "method": "get"
+  },
+  {
+    "tag": "input",
+    "text": "",
+    "id": "user-name",
+    "class": "input_error form_input",
+    "name": "user-name",
+    "type": "text",
+    "placeholder": "Username"
+  },
+  {
+    "tag": "input",
+    "text": "",
+    "id": "password",
+    "class": "input_error form_input",
+    "name": "password",
+    "type": "password",
+    "placeholder": "Password"
+  },
+  {
+    "tag": "div",
+    "text": "",
+    "class": "error-message-container"
+  },
+  {
+    "tag": "input",
+    "text": "",
+    "id": "login-button",
+    "class": "submit-button btn_action",
+    "name": "login-button",
+    "type": "submit",
+    "value": "Login"
+  },
+  {
+    "tag": "div",
+    "text": "Accepted usernames are:\nstandard_user\nlocked_out_user\nproblem_user\nperformance_glitch_user\nerror_user\nvisual_user",
+    "id": "login_credentials",
+    "class": "login_credentials"
+  },
+  {
+    "tag": "h4",
+    "text": "Accepted usernames are:"
+  },
+  {
+    "tag": "div",
+    "text": "Password for all users:\nsecret_sauce",
+    "class": "login_password"
+  },
+  {
+    "tag": "h4",
+    "text": "Password for all users:"
+  }
+]
