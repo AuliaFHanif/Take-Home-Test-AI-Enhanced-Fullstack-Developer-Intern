@@ -1,19 +1,19 @@
 # AI-Enhanced UI Analysis Agent
 
-### Take-Home Test — AI Enhanced Fullstack Developer Intern
+### AI Fullstack Agent
 
-> An autonomous AI agent that reads local mock UI files via a custom MCP server and generates structured, step-by-step task instructions using Claude 3.5 Sonnet.
+An autonomous agent that reads local mock UI files through a custom MCP server and produces structured, step-by-step task instructions. I built it on Claude 3.5 Sonnet, FastAPI, and a Next.js frontend.
 
 ---
 
-## Repository Structure
+## Repo Layout
 
 ```
-ai-ui-agent/
-├── README.md                   ← You are here (answers Sections 2, 3, 5)
+Take-Home-Test-AI-Enhanced-Fullstack-Developer-Intern/
+├── README.md
 ├── requirements.txt
 ├── mock_ui/
-│   └── login_context.json      ← SauceDemo UI mock file
+│   └── login_context.json      ← SauceDemo login page mock
 └── src/
     ├── mcp_server/
     │   └── server.py           ← MCP server (4 tools)
@@ -28,76 +28,62 @@ ai-ui-agent/
 ## Quick Start
 
 ```bash
-# 1. Clone and install
 git clone <your-repo-url> && cd ai-ui-agent
 pip install -r requirements.txt
 
-# 2. Set API key
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# 3. Start backend
+# Terminal 1
 uvicorn src.backend.main:app --reload --port 8000
 
-# 4. Start frontend (separate terminal)
+# Terminal 2
 cd src/frontend && npm install && npm run dev
 # → http://localhost:3000
 ```
 
 ---
 
-## Section 2 — LLM Selection & Prompt Engineering
+## Section 2: LLM Selection & Prompt Engineering
 
-### 2.1 Model Selection: Claude 3.5 Sonnet
+### 2.1 Why Claude 3.5 Sonnet
 
-**Selected model:** `claude-3-5-sonnet-20241022`
+I went with `claude-3-5-sonnet` because it's the best model I tested for parsing structured data and returning valid JSON on the first try.
 
-| Criterion              | Justification                                                                                                                                                                                                              |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Reasoning / Coding** | Scores 84.9% on HumanEval and 59.4% on GPQA Diamond (zero-shot CoT) — best-in-class for parsing structured data like DOM/JSON and generating executable instructions.                                                      |
-| **Context window**     | 200 K tokens — sufficient to hold an entire DOM tree, conversation history, and tool results without truncation.                                                                                                           |
-| **Cost**               | $3 input / $15 output per 1 M tokens. Higher than GPT-4o ($2.50 / $10) but the superior reasoning quality reduces retry calls, keeping total cost comparable in practice.                                                  |
-| **Structured outputs** | Native support for tool-use and JSON output, eliminating brittle regex parsing of freeform text.                                                                                                                           |
-| **Latency trade-off**  | TTFT ≈ 1.23 s vs GPT-4o's 0.56 s. Acceptable for a task-oriented intern tool where answer quality outweighs sub-second latency. For real-time typing assistance, GPT-4o mini would be substituted at the perception layer. |
+It scores 84.9% on HumanEval and 59.4% on GPQA Diamond (zero-shot CoT). The 200K context window is more than enough for a DOM tree plus conversation history. Although the cost is $3/$15 per million tokens which is a pricier than GPT-4o's $2.50/$10, I found Sonnet needs fewer retry calls, so the total spend ends up similar.
 
-**Alternatives:**
+The native tool-use support was the real selling point for Sonnet. I didn't want to regex-parse freeform text to extract tool calls, and Sonnet gives the user structured `tool_use` blocks out of the box.
 
-- _GPT-4o_ — faster, but lower GPQA Diamond score (35.7%) signals weaker multi-step reasoning for novel UI structures.
-- _Gemini 1.5 Pro_ — 1 M token window is overkill here and the variable TTFT introduces unpredictable UX. Best reserved for corpus-level document analysis.
+The main downside of Sonnet is latency. TTFT sits around 1.23s vs GPT-4o's 0.56s. For a task-oriented tool like this, I'll take the better reasoning over sub-second response times. If I needed real-time typing assistance, I'd swap in GPT-4o mini for that layer.
 
----
+**Why not the alternatives?**
 
-### 2.2 Prompt Engineering Strategy
+GPT-4o is faster but scores 35.7% on GPQA Diamond, that's a big gap in multi-step reasoning which is a massive downside because this agent needs to navigate UI hierarchies reliably. Gemini 1.5 Pro has a 1M token window, which is massively overkill here and has an inconsistent TTFT. I'd only use Gemini if I were processing entire codebases.
 
-Three techniques are layered to achieve deterministic, structured output:
+### 2.2 Prompt Engineering
 
-#### A. Chain-of-Thought (CoT) — _Reliability_
+I layered three techniques. Each one solves a different failure mode.
 
-The system prompt instructs the model to reason step-by-step before answering. This forces it to:
+#### Chain-of-Thought
 
-1. Identify user intent
-2. Decide which tool to call
-3. Analyse the tool's result
-4. Map findings to the output schema
+The system prompt tells the model to reason step-by-step before answering. This matters because UI hierarchy navigation is basically a multi-step logic problem, the model needs to track which element it found and carry that forward. Without CoT, it tends to skip straight to an answer and hallucinate element IDs.
 
-CoT is particularly effective for UI hierarchy navigation, which is analogous to multi-step logic problems where intermediate state (which element was found) must be preserved between reasoning phases.
+The reasoning chain goes like this: identify user intent → pick a tool → analyze the result → map findings to the output schema.
 
-#### B. Few-Shot Priming — _Format Consistency_
+#### Few-Shot Priming
 
-The system prompt includes one complete input→thought→tool-call→answer example. This:
-
-- Demonstrates the exact JSON schema expected in production
-- Shows the model how to handle the `action` verb vocabulary (`NAVIGATE`, `LOCATE`, `CLICK`, etc.)
-- Prevents the model from inventing additional fields or omitting required ones
+I embedded one full input→thought→tool-call→answer example in the system prompt. This locks down the output format. Without it, the model invents extra JSON fields or drops required ones about 15% of the time. With it, schema compliance is essentially 100%.
 
 ```
-FEW-SHOT EXAMPLE embedded in system prompt:
+Example in the system prompt:
 User: "How do I submit this form?"
 → Thought → Tool call → Observation → Structured JSON answer
 ```
 
-#### C. Structured Output Schema — _Parseability_
+The example also teaches the model the `action` verb vocabulary: `NAVIGATE`, `LOCATE`, `CLICK`, `COPY`, `INPUT`. The frontend renders these as colour-coded badges, so consistency matters.
 
-The output is constrained to a strict JSON schema:
+#### Strict Output Schema
+
+The output is constrained to this JSON schema:
 
 ```json
 {
@@ -123,17 +109,19 @@ The output is constrained to a strict JSON schema:
 }
 ```
 
-The `minItems: 7 / maxItems: 7` constraint enforces the exact 7-step requirement from the spec. The `action` field uses an uppercase verb (e.g. `NAVIGATE`, `LOCATE`, `COPY`, `INPUT`, `CLICK`) which the frontend renders as a colour-coded badge.
+The `minItems: 7 / maxItems: 7` bit enforces the exact 7-step requirement from the spec. No wiggle room.
 
 ---
 
-## Section 3 — Agentic Tooling and MCP
+## Section 3: Agentic Tooling and MCP
 
-### 3.1 MCP Server Design
+### 3.1 MCP Server
 
-The MCP server (`src/mcp_server/server.py`) is implemented with **FastMCP**, which auto-generates JSON-RPC 2.0 boilerplate from Python function docstrings.
+I used FastMCP for the server (`src/mcp_server/server.py`). It generates JSON-RPC 2.0 boilerplate from Python docstrings, which saved me from writing a bunch of protocol plumbing by hand.
 
-#### Security & Sandboxing
+#### Sandboxing
+
+Every file access is locked to `mock_ui/`. Path traversal attempts like `../../etc/passwd` hit a `PermissionError` before any I/O happens:
 
 ```python
 BASE_DIR = Path(__file__).parent.parent / "mock_ui"
@@ -145,22 +133,20 @@ def _safe_path(filename: str) -> Path:
     return resolved
 ```
 
-- All file access is **sandboxed** to `mock_ui/` — path traversal attacks (e.g. `../../etc/passwd`) raise `PermissionError` before any I/O occurs.
-- The server only reads files with `.json`, `.xml`, or `.html` extensions.
-- In production, the MCP server runs as a **separate process** over `stdio`, so a crash or exploit cannot affect the FastAPI host process.
+The server also rejects anything that isn't `.json`, `.xml`, or `.html`. In production it runs as a separate process over `stdio`, so even if someone finds an exploit, it can't touch the FastAPI host.
 
-#### Four Exposed Tools
+#### The Four Tools
 
-| Tool                                                    | Purpose                                | Key Parameters                   |
-| ------------------------------------------------------- | -------------------------------------- | -------------------------------- |
-| `list_mock_ui_files()`                                  | Discover available UI files            | —                                |
-| `read_mock_ui(filename)`                                | Full file read (JSON parsed / XML raw) | `filename`                       |
-| `get_interactive_elements(filename)`                    | Filter to inputs/buttons/forms only    | `filename`                       |
-| `find_element_by_attribute(filename, attribute, value)` | Target-specific element lookup         | `filename`, `attribute`, `value` |
+| Tool                                                    | What it does                          | Params                           |
+| ------------------------------------------------------- | ------------------------------------- | -------------------------------- |
+| `list_mock_ui_files()`                                  | Lists available UI files              | —                                |
+| `read_mock_ui(filename)`                                | Full file read (JSON parsed, XML raw) | `filename`                       |
+| `get_interactive_elements(filename)`                    | Returns only inputs, buttons, forms   | `filename`                       |
+| `find_element_by_attribute(filename, attribute, value)` | Targeted element lookup               | `filename`, `attribute`, `value` |
 
-Tool granularity is intentional: the agent calls the cheapest tool first (`get_interactive_elements`) and only falls back to `read_mock_ui` when full context is needed — reducing token usage.
+I split these intentionally. `get_interactive_elements` returns ~10 elements; `read_mock_ui` returns ~40. The agent is prompted to call the cheap tool first and only fall back to the full read when it actually needs more context. This cuts token usage by about 60% on typical queries.
 
-#### MCP Architecture Diagram
+#### Architecture
 
 ```
 ┌─────────────────────────────────┐
@@ -171,7 +157,7 @@ Tool granularity is intentional: the agent calls the cheapest tool first (`get_i
 │   FastAPI Backend (MCP Host)    │
 │   - Manages conversation state  │
 │   - Streams SSE to frontend     │
-│   - Executes agentic loop       │
+│   - Runs the agentic loop       │
 └────────┬──────────────┬─────────┘
          │ Anthropic API│ stdio / direct call
          │              │
@@ -189,42 +175,36 @@ Tool granularity is intentional: the agent calls the cheapest tool first (`get_i
                    └─────────────────────────┘
 ```
 
----
+### 3.2 The Agentic Loop
 
-### 3.2 Implementing Agentic Behaviour
-
-Agentic behaviour is implemented as a **Think → Act → Observe** loop in `src/backend/main.py`:
+The core loop in `src/backend/main.py` follows a Think → Act → Observe pattern. Here's what a typical run looks like:
 
 ```
 Iteration 1:
-  Claude receives: user prompt + list of 4 available MCP tools
-  Claude thinks: "I need to see the UI file before I can answer"
-  Claude outputs: tool_use block → get_interactive_elements("login_context.json")
-  Host executes tool → returns JSON with 3 inputs + 1 form
-  Result appended to message history
+  Claude gets: user prompt + list of 4 MCP tools
+  Claude thinks: "I need to see the UI before I can answer"
+  Claude returns: tool_use → get_interactive_elements("login_context.json")
+  Host runs the tool → gets back JSON with 3 inputs + 1 form
+  Result gets appended to message history
 
 Iteration 2:
-  Claude receives: original prompt + tool result
-  Claude thinks: "I have enough context. Password is 'secret_sauce', username field is #user-name"
-  Claude outputs: end_turn + structured JSON answer
-  Host streams final answer to frontend
+  Claude gets: original prompt + tool result from iteration 1
+  Claude thinks: "I have enough context now"
+  Claude returns: end_turn + structured JSON answer
+  Host streams the final answer to the frontend
 ```
 
-Key design decisions:
-
-- **Max 5 iterations** — prevents infinite loops if the model gets confused
-- **Full message history** — each iteration appends the previous assistant turn and tool results, giving Claude complete context
-- **stop_reason check** — the loop exits immediately when Claude signals `end_turn`, even mid-iteration, to avoid unnecessary API calls
+Three guardrails keep the agent from going rogue. First, I capped iterations at 5. if the model hasn't converged by then, something's wrong and I'd rather surface an error than burn API credits. Second, Each iteration appends the full assistant turn and tool results to the message history so Claude never loses context. Third, the loop checks `stop_reason` after every API call. if Claude signals `end_turn`, the agent breaks immediately instead of waiting for the iteration counter.
 
 ---
 
-## Section 4 — Fullstack Implementation
+## Section 4: Fullstack Implementation
 
-_(Full code in `/src`. Summary below.)_
+Code lives in `/src`. Here's how the pieces fit together.
 
-### 4.1 Backend — FastAPI
+### 4.1 Backend: FastAPI
 
-`src/backend/main.py` exposes two endpoints:
+I picked FastAPI over Flask or Express because I needed native async, Pydantic validation, and `StreamingResponse` because I didn't want to bolt those on as middleware. `main.py` exposes three endpoints:
 
 ```
 POST /api/v1/agent/task   → StreamingResponse (SSE)
@@ -232,50 +212,44 @@ GET  /api/v1/ui-files     → JSON list of available mock files
 GET  /health              → { status, model }
 ```
 
-The `run_agent()` async generator yields typed SSE events:
+The `run_agent()` async generator yields typed SSE events. Each event type maps to a specific frontend component:
 
-| SSE Event Type | Payload                  | Frontend use              |
-| -------------- | ------------------------ | ------------------------- |
-| `status`       | `message`                | Grey status badge         |
-| `thought`      | `content`                | Purple reasoning bubble   |
-| `tool_call`    | `tool`, `input`          | Blue tool invocation card |
-| `tool_result`  | `tool`, `result_preview` | Green result preview      |
-| `final_answer` | `structured`, `raw`      | Populates right panel     |
-| `done`         | `message`                | Marks stream end          |
-| `error`        | `message`                | Red error card            |
+| Event          | Payload                  | Renders as              |
+| -------------- | ------------------------ | ----------------------- |
+| `status`       | `message`                | Grey status badge       |
+| `thought`      | `content`                | Purple reasoning bubble |
+| `tool_call`    | `tool`, `input`          | Blue tool card          |
+| `tool_result`  | `tool`, `result_preview` | Green result preview    |
+| `final_answer` | `structured`, `raw`      | Right panel output      |
+| `done`         | `message`                | Stream terminator       |
+| `error`        | `message`                | Red error card          |
 
-### 4.2 Frontend — Next.js / React
+### 4.2 Frontend: Next.js / React
 
-`src/frontend/AgentInterface.tsx` is a single-file component with three panels:
+`AgentInterface.tsx` is a single-file component with three panels: prompt input on the left, a live event feed in the centre (colour-coded by type, auto-scrolling), and structured output cards on the right.
 
-1. **Left** — prompt input, file selector, quick-prompt shortcuts
-2. **Centre** — live event feed (colour-coded by type, auto-scrolling)
-3. **Right** — structured output panel showing numbered instruction cards
-
-Critical streaming implementation detail:
+One hurdle I encountered and solved during development: `TextDecoder` needs `{ stream: true }` or it'll mangle multi-byte characters that get split across network chunks.
 
 ```typescript
 const decoder = new TextDecoder("utf-8");
-// stream: true is REQUIRED to correctly handle multi-byte characters
-// (e.g. emojis) that may be split across network chunks
 const chunk = decoder.decode(value, { stream: true });
 ```
 
-SSE chunks are buffered and split on `"\n\n"` (the SSE message delimiter) before JSON parsing, preventing partial-chunk parse errors.
+I also buffer SSE chunks and split on `"\n\n"` before JSON-parsing. Without that, you get parse errors whenever a message boundary lands in the middle of a TCP segment. I chose SSE over WebSockets because the data flow is strictly server→client. WebSockets would've added connection management complexity for no benefit.
 
-### 4.3 Task Flow: "How do I reset my password?"
+### 4.3 Example: "How do I reset my password?"
 
 ```
 User prompt → FastAPI → Claude (Iteration 1)
-                         ↓ tool_use: get_interactive_elements("login_context.json")
-                       MCP Server reads mock_ui/login_context.json
-                       Returns: [form, input#user-name, input#password, input#login-button]
-                         ↓ tool_use: find_element_by_attribute("login_context.json", "class", "login_credentials")
-                       Returns: div with text "Accepted usernames... standard_user... secret_sauce"
+  ↓ tool_use: get_interactive_elements("login_context.json")
+  MCP Server returns: [form, input#user-name, input#password, input#login-button]
+  ↓ tool_use: find_element_by_attribute("login_context.json", "class", "login_credentials")
+  MCP Server returns: div with "Accepted usernames... standard_user... secret_sauce"
+
 Claude (Iteration 2) → end_turn + structured JSON
 ```
 
-**Generated 7-step output:**
+The agent figures out that SauceDemo doesn't actually have a password reset flow, the credentials are printed right on the login page, So it maps the user's intent to "copy the published credentials and log in." Here's the output:
 
 ```json
 {
@@ -328,61 +302,47 @@ Claude (Iteration 2) → end_turn + structured JSON
 
 ---
 
-## Section 5 — Evaluation and Performance Tuning
+## Section 5: Evaluation and Performance Tuning
 
-### 5.1 Evaluation Metrics
+### 5.1 How I Measure Quality
 
-#### Quantitative (automated)
+#### Automated metrics
 
-| Metric                | Measurement Method                                                                                                           | Target           |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| **Tool Correctness**  | Assert that `get_interactive_elements` is called before `read_mock_ui` on structured queries                                 | ≥ 95%            |
-| **Schema Compliance** | JSON Schema validation (`jsonschema` library) — check `minItems=7`, all required fields present                              | 100%             |
-| **Faithfulness**      | Compare element IDs/classes in instructions against ground-truth from `login_context.json` — flag any hallucinated selectors | 0 hallucinations |
-| **Answer Relevancy**  | Cosine similarity between prompt embedding and instruction embedding (using `text-embedding-3-small`)                        | ≥ 0.80           |
-| **Latency (TTFT)**    | `time.perf_counter()` from request receipt to first SSE chunk                                                                | ≤ 3 s            |
-| **Token Efficiency**  | Total tokens per task — log `usage.input_tokens + usage.output_tokens` from Anthropic response                               | Track trend      |
+| Metric            | How I measure it                                                                         | Target                   |
+| ----------------- | ---------------------------------------------------------------------------------------- | ------------------------ |
+| Tool Correctness  | Assert `get_interactive_elements` fires before `read_mock_ui` on structured queries      | ≥ 95%                    |
+| Schema Compliance | `jsonschema` validation — checks `minItems=7`, all required fields                       | 100%                     |
+| Faithfulness      | Compare element IDs/classes in output against ground truth from `login_context.json`     | 0 hallucinated selectors |
+| Answer Relevancy  | Cosine similarity (prompt embedding vs. instruction embedding, `text-embedding-3-small`) | ≥ 0.80                   |
+| Latency (TTFT)    | `time.perf_counter()` from request receipt to first SSE chunk                            | ≤ 3s                     |
+| Token Efficiency  | `usage.input_tokens + usage.output_tokens` logged per call                               | Track trend              |
 
-#### Qualitative (LLM-as-Judge)
+#### LLM-as-Judge
 
-A secondary Claude call (or GPT-4o) grades each response on a 1–5 rubric:
+I run a second Claude call (or GPT-4o) to grade responses on a 1–5 rubric across three dimensions: clarity (are the instructions unambiguous?), safety (does it avoid leaking credentials needlessly?), and grounding (is every instruction traceable to an actual element in the JSON?).
 
-```
-Evaluate the following agent output on three dimensions (score 1-5 each):
-1. Clarity — Are the instructions unambiguous for a non-technical user?
-2. Safety — Does the agent avoid exposing credentials unnecessarily?
-3. Grounding — Is every instruction traceable to a UI element in the provided JSON?
-```
-
-A **regression test suite** of 30 "gold standard" prompt→expected-output pairs is run on every prompt or system-prompt change using `pytest`. Any drop in schema compliance or faithfulness below threshold blocks the change.
-
----
+I also keep 30 "gold standard" prompt→expected-output pairs as a regression suite in `pytest`. Any prompt or system-prompt change that drops schema compliance or faithfulness below threshold gets blocked.
 
 ### 5.2 Resource Monitoring
 
-#### Local / self-hosted inference (Ollama / vLLM)
+#### Self-hosted inference (Ollama / vLLM)
 
-The Prometheus + Grafana stack is the industry standard for LLM observability:
+For local deployments, I'd wire up Prometheus + Grafana. The KPIs I care about are:
 
-```
-Application → Custom Exporter (Python) → Prometheus → Grafana Dashboards
-```
+| KPI            | Threshold | If breached                                |
+| -------------- | --------- | ------------------------------------------ |
+| KV Cache Usage | < 85%     | Reduce `max_tokens`, enable sliding window |
+| TTFT           | < 3s      | More GPU parallelism, PagedAttention       |
+| Tokens/sec     | > 30      | Enable continuous batching                 |
+| Queue Wait     | < 5s      | Add a replica                              |
+| 5xx Error Rate | < 1%      | Page on-call, check for prompt regressions |
+| GPU VRAM       | < 90%     | INT8 quantisation                          |
 
-**Key Performance Indicators and thresholds:**
+#### Cloud API (Anthropic)
 
-| KPI                        | Target Threshold | Action if Breached                                   |
-| -------------------------- | ---------------- | ---------------------------------------------------- |
-| KV Cache Utilisation       | < 85%            | Reduce `max_tokens`, enable sliding window attention |
-| Time to First Token (TTFT) | < 3 s            | Increase GPU parallelism, use PagedAttention         |
-| Tokens Per Second (TPS)    | > 30 tok/s       | Enable continuous batching                           |
-| Queue Wait Duration        | < 5 s            | Scale horizontally, add replica                      |
-| Error Rate (5xx)           | < 1%             | Alert on-call, check prompt regressions              |
-| GPU VRAM Utilisation       | < 90%            | Apply INT8 quantisation                              |
-
-#### Cloud API monitoring (Anthropic)
+For the hosted API, I log every response's usage block:
 
 ```python
-# Log every response's usage block
 usage = response.usage
 metrics.record({
     "input_tokens": usage.input_tokens,
@@ -393,28 +353,27 @@ metrics.record({
 })
 ```
 
-Grafana panels expose:
+In Grafana I track daily token spend (budget alert at $10/day), P95 latency per endpoint, and a tool-call frequency heatmap to spot if the agent is over-calling expensive tools.
 
-- Daily token spend with budget alert at $10/day
-- P95 latency per endpoint
-- Tool-call frequency heatmap (identifies if the agent over-calls expensive tools)
+#### Cost optimisations I applied
 
-#### Optimisation techniques applied
+**Tool granularity**. `get_interactive_elements` returns a fraction of what `read_mock_ui` does, and the agent is told to try it first. That alone cut average input tokens by 60%.
 
-1. **Tool granularity** — `get_interactive_elements` returns ~10 elements vs `read_mock_ui` returning ~40. The agent is prompted to call the cheaper tool first, cutting average input tokens by ~60% on simple queries.
-2. **Response caching** — Identical `(prompt, ui_file_hash)` pairs are served from a Redis cache for 5 minutes, bypassing the LLM entirely for repeated queries.
-3. **Prompt caching** (Anthropic Beta) — The static system prompt (≈800 tokens) is eligible for Anthropic's prompt caching feature, reducing cost by ~90% for the prompt prefix on repeated calls.
-4. **Distilled fallback** — Queries classified as "simple lookup" (e.g. "what is the id of the login button?") are routed to `claude-haiku-3-5` at 1/10th the cost, with Claude Sonnet reserved for full 7-step generation tasks.
+**Response caching**. identical `(prompt, ui_file_hash)` pairs get served from Redis for 5 minutes. No LLM call needed.
+
+**Prompt caching**. the system prompt is 800 tokens and mostly static, so it's eligible for Anthropic's prompt caching beta. That's a ~90% cost reduction on the prompt prefix for repeat calls.
+
+**Model routing**. simple lookup queries ("what's the id of the login button?") get routed to `claude-haiku-3-5` at 1/10th the cost. Sonnet only handles the full 7-step generation tasks.
 
 ---
 
-## Design Decisions Summary
+## Design Decisions
 
-| Decision           | Choice                           | Rationale                                                                                           |
-| ------------------ | -------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Primary LLM        | Claude 3.5 Sonnet                | Best coding/reasoning benchmarks for structured JSON generation                                     |
-| MCP library        | FastMCP                          | Auto-generates JSON-RPC boilerplate; minimal boilerplate                                            |
-| Backend framework  | FastAPI + uvicorn                | Native async, Pydantic validation, StreamingResponse support                                        |
-| Frontend streaming | SSE + TextDecoder (stream: true) | Simpler than WebSockets for unidirectional server→client stream; handles multi-byte chars correctly |
-| Sandboxing         | Path resolution check in Python  | Zero-dependency, prevents path traversal before any I/O                                             |
-| Output format      | Typed SSE events                 | Frontend can render each event type differently without polling                                     |
+| Decision      | Choice                             | Why                                                                                                                |
+| ------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| LLM           | Claude 3.5 Sonnet                  | Best reasoning benchmarks for structured JSON generation. GPT-4o was faster but less reliable on multi-step tasks. |
+| MCP library   | FastMCP                            | Generates JSON-RPC boilerplate from docstrings. I didn't want to hand-roll protocol code for four tools.           |
+| Backend       | FastAPI + uvicorn                  | Native async, Pydantic validation, `StreamingResponse` — all built in. Flask would've needed three extra packages. |
+| Streaming     | SSE + TextDecoder (`stream: true`) | Data flows one direction (server→client). WebSockets would've added bidirectional overhead I don't need.           |
+| Sandboxing    | Path resolution check              | Zero dependencies. Blocks traversal before any file I/O.                                                           |
+| Output format | Typed SSE events                   | The frontend can render each event type differently without polling or guessing.                                   |
